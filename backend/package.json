@@ -14,10 +14,15 @@
   "author": "",
   "type": "module",
   "main": "server.js",
+  "imports": {
+    "#config/*": "./src/config/*.js",
+    "#middleware/*": "./src/middleware/*.js"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node src/server.js"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "pg": "^8.22.0"
   }
 }
