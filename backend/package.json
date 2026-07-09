@@ -1,0 +1,23 @@
+{
+  "name": "joy-junction",
+  "version": "1.0.0",
+  "description": "Trampolines, bowling, arcade, PS5 and a kids' world under one roof — built for families, friend groups, and birthdays worth remembering.",
+  "homepage": "https://github.com/rishank046/joy-junction#readme",
+  "bugs": {
+    "url": "https://github.com/rishank046/joy-junction/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rishank046/joy-junction.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
