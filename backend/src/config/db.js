@@ -17,7 +17,7 @@ const databaseServer = new Pool({
   
   ssl: {
     rejectUnauthorized: true, 
-    ca: fs.readFileSync("./ca.pem", "utf8"),
+    ca: fs.readFileSync("./src/config/ca.pem", "utf8"),
   },
 });
 
