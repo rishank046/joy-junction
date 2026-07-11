@@ -13,7 +13,7 @@ export const signup = async (req, res , next) => {
     return res.status(201).json({
         success: true,
         token,
-        data: { user }
+        data: { "name" : user.name , "email" : user.email }
     });
 };
 
