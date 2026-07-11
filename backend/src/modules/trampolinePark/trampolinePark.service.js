@@ -1,49 +1,62 @@
 import pool from '#config/db';
 
 const checkAvailability = async (dateStr, startTimeStr, endTimeStr, tickets) => {
-
     if (isNaN(tickets) || tickets <= 0) {
         throw new Error('Requested tickets quantity must be an integer greater than 0.');
     }
 
-    const absoluteWindowStart = `${dateStr} ${startTimeStr}`;
-    const absoluteWindowEnd = `${dateStr} ${endTimeStr}`;
-
-    const queryText = `
-        WITH service_meta AS (
-            SELECT id, max_capacity 
-            FROM services 
-            WHERE LOWER(name) = 'trampoline zone'
-            LIMIT 1
-        ),
-        inserted_availability AS (
-            INSERT INTO service_availability (resource_id, start_time, end_time, current_occupancy)
-            SELECT id, $1::timestamp, $2::timestamp, 0 
-            FROM service_meta
-            ON CONFLICT (resource_id, start_time, end_time) DO NOTHING
-            RETURNING id, current_occupancy
-        )
+    const configQuery = `
         SELECT 
-            sa.id AS availability_id,
-            sa.start_time,
-            sa.end_time,
-            sm.max_capacity,
-            sa.current_occupancy,
-            (sm.max_capacity - sa.current_occupancy) AS remaining_seats,
+            s.id AS service_id,
+            ts.slot_no,
+            ts.start_time,
+            ts.end_time,
+            s.max_capacity,
             CASE 
-                WHEN EXTRACT(ISODOW FROM sa.start_time) IN (6, 7) THEN sp.weekend_price
-                ELSE sp.weekday_price
+                WHEN EXTRACT(ISODOW FROM $1::date) IN (6, 7) THEN sp.wep
+                ELSE sp.wdp
             END AS per_ticket_price
-        FROM service_availability sa
-        JOIN service_meta sm ON sa.resource_id = sm.id
-        JOIN service_prices sp ON sp.service_id = sm.id
-        WHERE sa.start_time = $1::timestamp 
-          AND sa.end_time = $2::timestamp
-          AND (sa.current_occupancy + $3) <= sm.max_capacity;
+        FROM public.services s
+        CROSS JOIN public.time_slots ts
+        JOIN public.prices sp ON sp.service_id = s.id
+        WHERE LOWER(s.name) = 'trampoline park'
+          AND ts.start_time = $2::time 
+          AND ts.end_time = $3::time
+        LIMIT 1;
     `;
 
-    const result = await pool.query(queryText, [absoluteWindowStart, absoluteWindowEnd, tickets]);
-    return result.rows; 
+    const configResult = await pool.query(configQuery, [dateStr, startTimeStr, endTimeStr]);
+    
+    if (configResult.rows.length === 0) {
+        throw new Error('The requested time slot or service does not exist in the system configuration.');
+    }
+
+    const { service_id, slot_no, start_time, end_time, max_capacity, per_ticket_price } = configResult.rows[0];
+
+    const occupancyQuery = `
+        SELECT COALESCE(SUM(no_of_tickets), 0) AS total_booked
+        FROM public.bookings
+        WHERE service_id = $1 
+          AND slot_no = $2 
+          AND date = $3::date;
+    `;
+
+    const occupancyResult = await pool.query(occupancyQuery, [service_id, slot_no, dateStr]);
+    const currentOccupancy = parseInt(occupancyResult.rows[0].total_booked, 10);
+
+    const remainingSeats = max_capacity - currentOccupancy;
+    const isAvailable = (currentOccupancy + tickets) <= max_capacity;
+
+    return {
+        slot_no,
+        start_time,
+        end_time,
+        max_capacity,
+        current_occupancy: currentOccupancy,
+        remaining_seats: remainingSeats,
+        is_available: isAvailable,
+        per_ticket_price: parseFloat(per_ticket_price)
+    };
 };
 
 const bookTicket = async (userId, dateStr, startTimeStr, endTimeStr, seatsRequested) => {
@@ -56,8 +69,6 @@ const bookTicket = async (userId, dateStr, startTimeStr, endTimeStr, seatsReques
         throw new Error('Missing input parameters: date, startTime, and endTime are mandatory.');
     }
 
-    const absoluteStart = `${dateStr} ${startTimeStr}`;
-    const absoluteEnd = `${dateStr} ${endTimeStr}`;
     const client = await pool.connect();
 
     try {
@@ -65,56 +76,80 @@ const bookTicket = async (userId, dateStr, startTimeStr, endTimeStr, seatsReques
 
         const lockAndResolveQuery = `
             SELECT 
-                sa.id AS availability_id,
-                sa.current_occupancy, 
+                s.id AS service_id,
+                ts.slot_no,
                 s.max_capacity,
+                COALESCE(SUM(b.no_of_tickets), 0) AS current_occupancy,
                 CASE 
-                    WHEN EXTRACT(ISODOW FROM sa.start_time) IN (6, 7) THEN sp.weekend_price
-                    ELSE sp.weekday_price
+                    WHEN EXTRACT(ISODOW FROM $1::date) IN (6, 7) THEN sp.wep
+                    ELSE sp.wdp
                 END AS single_seat_price
-            FROM service_availability sa
-            JOIN services s ON sa.resource_id = s.id
-            JOIN service_prices sp ON sp.service_id = s.id
-            WHERE LOWER(s.name) = 'trampoline zone'
-              AND sa.start_time = $1::timestamp
-              AND sa.end_time = $2::timestamp
-            FOR UPDATE;
+            FROM public.services s
+            CROSS JOIN public.time_slots ts
+            JOIN public.prices sp ON sp.service_id = s.id
+            LEFT JOIN public.bookings b ON b.service_id = s.id 
+                AND b.slot_no = ts.slot_no 
+                AND b.date = $1::date
+            WHERE LOWER(s.name) = 'trampoline park'
+              AND ts.start_time = $2::time
+              AND ts.end_time = $3::time
+            GROUP BY s.id, ts.slot_no, s.max_capacity, sp.wep, sp.wdp
+            FOR UPDATE OF s;
         `;
         
-        const slotCheck = await client.query(lockAndResolveQuery, [absoluteStart, absoluteEnd]);
+        const slotCheck = await client.query(lockAndResolveQuery, [dateStr, startTimeStr, endTimeStr]);
 
         if (slotCheck.rows.length === 0) {
-            throw new Error('No active trampoline park schedule found matching the requested date and time window.');
+            throw new Error('No active service or matching time slot found.');
         }
 
-        const { availability_id, current_occupancy, max_capacity, single_seat_price } = slotCheck.rows[0];
+        const { service_id, slot_no, max_capacity, current_occupancy, single_seat_price } = slotCheck.rows[0];
 
-        if (current_occupancy + seats > max_capacity) {
-            throw new Error(`Booking rejected: Only ${max_capacity - current_occupancy} seats remaining for this window.`);
+        const currentOccupancyInt = parseInt(current_occupancy, 10);
+        if (currentOccupancyInt + seats > max_capacity) {
+            throw new Error(`Booking rejected: Only ${max_capacity - currentOccupancyInt} seats remaining for this window.`);
         }
 
         const unitPrice = parseFloat(single_seat_price);
         const totalCost = unitPrice * seats;
 
-        await client.query(`UPDATE service_availability SET current_occupancy = current_occupancy + $1 WHERE id = $2;`, [seats, availability_id]);
-
         const insertBookingQuery = `
-            INSERT INTO trampoline_bookings (user_id, availability_id, seats_booked)
-            VALUES ($1, $2, $3)
-            RETURNING id, user_id, availability_id, seats_booked, booked_at;
+            INSERT INTO public.bookings (service_id, slot_no, user_id, no_of_tickets, date)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id, service_id, slot_no, user_id, no_of_tickets AS seats_booked, date, created_at AS booked_at;
         `;
-        const bookingResult = await client.query(insertBookingQuery, [userId, availability_id, seats]);
+        const bookingResult = await client.query(insertBookingQuery, [service_id, slot_no, userId, seats, dateStr]);
+        const booking = bookingResult.rows[0];
+
+        const insertTicketsQuery = `
+            WITH inserted_tickets AS (
+                INSERT INTO public.ticket (booking_id, start_time, end_time, date)
+                SELECT $1, $2::time, $3::time, $4::date
+                FROM generate_series(1, $5)
+                RETURNING id, booking_id, start_time, end_time, date, created_at
+            )
+            SELECT COALESCE(json_agg(row_to_json(inserted_tickets)), '[]'::json) AS tickets_list 
+            FROM inserted_tickets;
+        `;
+        
+        const ticketResult = await client.query(insertTicketsQuery, [booking.id, startTimeStr, endTimeStr, dateStr, seats]);
+        const tickets = ticketResult.rows[0].tickets_list;
 
         await client.query('COMMIT');
 
-        return { ...bookingResult.rows[0], unitPrice, totalCost };
+        return { 
+            ...booking, 
+            unitPrice, 
+            totalCost,
+            tickets 
+        };
 
     } catch (error) {
-        await client.query('ROLLBACK'); // 1. Secure DB integrity
+        await client.query('ROLLBACK');
         throw error;                   
     } finally {
         client.release();               
     }
 };
 
-export default {checkAvailability , bookTicket};
+export default { checkAvailability, bookTicket };

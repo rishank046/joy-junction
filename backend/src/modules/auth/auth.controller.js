@@ -4,7 +4,7 @@ export const signup = async (req, res , next) => {
     const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
-        throw new Error('Please provide name, email, and password.');
+        throw new Error('INSUFFICIENT_DATA');
     }
 
     // Hand off values to service layer execution context
@@ -21,7 +21,7 @@ export const login = async (req, res , next) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-        throw new Error('Please provide email and password.');
+        throw new Error('INSUFFICIENT_DATA');
     }
 
     // Fetch verified dataset from service layer

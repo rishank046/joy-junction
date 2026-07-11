@@ -17,7 +17,7 @@ const authenticate = catchWrapper(async (req, res, next) => {
     }
 
     if (!token) {
-        throw new Error('You are not logged in. Please provide a valid authentication token.');
+        throw new Error('UNAUTHORIZED');
     }
 
     try {
@@ -30,7 +30,7 @@ const authenticate = catchWrapper(async (req, res, next) => {
         const currentUser = result.rows[0];
 
         if (!currentUser) {
-            throw new Error('The user belonging to this token no longer exists.');
+            throw new Error('INVALID_TOKEN');
         }
 
         // 4. Mount the authenticated identity object directly onto the Express request state
@@ -42,10 +42,10 @@ const authenticate = catchWrapper(async (req, res, next) => {
     } catch (error) {
         // Intercept native jsonwebtoken verification failure naming structures
         if (error.name === 'JsonWebTokenError') {
-            throw new Error('Invalid token signature. Please log in again.');
+            throw new Error('INVALID_TOKEN');
         }
         if (error.name === 'TokenExpiredError') {
-            throw new Error('Your session has expired. Please log in again.');
+            throw new Error('INVALID_TOKEN');
         }
         throw error; // Re-throw unhandled errors to the catchWrapper
     }

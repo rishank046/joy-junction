@@ -28,7 +28,7 @@ export const registerUser = async (name, email, password) => {
         return { token, user: newUser };
     } catch (error) {
         if (error.code === '23505') {
-            throw new Error('Email address already registered.');
+            throw new Error('INVALID_DATA');
         }
         throw error;
     }
@@ -42,7 +42,7 @@ export const authenticateUser = async (email, password) => {
 
     // 2. Verify existence and run cryptographic hash comparison
     if (!user || !(await bcrypt.compare(password, user.password))) {
-        throw new Error('Incorrect email or password.');
+        throw new Error('INVALID_DATA');
     }
 
     // 3. Compile output context
