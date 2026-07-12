@@ -8,5 +8,6 @@ const router = express.Router();
 //anyone can see the availability but only logged user can book tickets
 router.post('/booking' , authenticate ,catchWrapper(controller.bookTrampolineTickets));
 router.get('/availability' ,catchWrapper(controller.checkAvailability));
+router.get('/getBookedTickets' , authenticate , catchWrapper(controller.getBookedTickets));
 
 export default router;

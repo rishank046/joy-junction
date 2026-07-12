@@ -44,4 +44,16 @@ const bookTrampolineTickets = async (req, res) => {
     });
 }
 
-export default {checkAvailability , bookTrampolineTickets};
+const getBookedTickets = async (req , res) => {
+    const userId = req.user.id; 
+  
+  const tickets = await trampolineService.getBookedTickets(userId);
+  
+  return res.status(200).json({
+    success: true,
+    count: tickets.length,
+    data: tickets
+  });
+}
+
+export default {checkAvailability , bookTrampolineTickets , getBookedTickets};

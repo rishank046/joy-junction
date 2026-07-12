@@ -74,26 +74,30 @@ const bookTicket = async (userId, dateStr, startTimeStr, endTimeStr, seatsReques
     try {
         await client.query('BEGIN');
 
+        // 1. Scalar subquery avoids GROUP BY constraint, allowing FOR UPDATE
+        // 2. Replaced CROSS JOIN with a filtered JOIN
         const lockAndResolveQuery = `
             SELECT 
                 s.id AS service_id,
                 ts.slot_no,
                 s.max_capacity,
-                COALESCE(SUM(b.no_of_tickets), 0) AS current_occupancy,
+                (
+                    SELECT COALESCE(SUM(b.no_of_tickets), 0)
+                    FROM public.bookings b
+                    WHERE b.service_id = s.id 
+                      AND b.slot_no = ts.slot_no 
+                      AND b.date = $1::date
+                ) AS current_occupancy,
                 CASE 
                     WHEN EXTRACT(ISODOW FROM $1::date) IN (6, 7) THEN sp.wep
                     ELSE sp.wdp
                 END AS single_seat_price
             FROM public.services s
-            CROSS JOIN public.time_slots ts
-            JOIN public.prices sp ON sp.service_id = s.id
-            LEFT JOIN public.bookings b ON b.service_id = s.id 
-                AND b.slot_no = ts.slot_no 
-                AND b.date = $1::date
+            JOIN public.time_slots ts 
+              ON ts.start_time = $2::time AND ts.end_time = $3::time
+            JOIN public.prices sp 
+              ON sp.service_id = s.id
             WHERE LOWER(s.name) = 'trampoline park'
-              AND ts.start_time = $2::time
-              AND ts.end_time = $3::time
-            GROUP BY s.id, ts.slot_no, s.max_capacity, sp.wep, sp.wdp
             FOR UPDATE OF s;
         `;
         
@@ -128,7 +132,7 @@ const bookTicket = async (userId, dateStr, startTimeStr, endTimeStr, seatsReques
                 FROM generate_series(1, $5)
                 RETURNING id, booking_id, start_time, end_time, date, created_at
             )
-            SELECT COALESCE(json_agg(row_to_json(inserted_tickets)), '[]'::json) AS tickets_list 
+            SELECT COALESCE(json_agg(inserted_tickets), '[]'::json) AS tickets_list 
             FROM inserted_tickets;
         `;
         
@@ -152,4 +156,39 @@ const bookTicket = async (userId, dateStr, startTimeStr, endTimeStr, seatsReques
     }
 };
 
-export default { checkAvailability, bookTicket };
+const getBookedTickets = async (userId) => {
+    if (!userId) {
+    throw new Error("VALIDATION_ERROR: userId parameter is required.");
+  }
+
+  // 2. Query Definition
+  // Uses parameterized inputs ($1) to guarantee protection against SQL injection
+  const query = `
+   SELECT 
+    id, 
+    start_time, 
+    end_time, 
+    date, 
+    created_at AS booking_time
+FROM ticket
+WHERE booking_id IN (
+    SELECT id 
+    FROM bookings 
+    WHERE user_id = $1
+);
+  `;
+
+  // 3. Execution Engine
+  try {
+    const result = await pool.query(query, [userId]);
+    return result.rows; // Returns an array of ticket objects, or [] if none exist
+  } catch (error) {
+    // Log the full stack trace internally for debugging
+    console.error("Query Execution Failure (getBookedTickets):", error.stack);
+    
+    // Throw a sanitized error back up the call stack to the controller
+    throw new Error("DB_ERROR: Failed to fetch booked tickets.");
+  }
+}
+
+export default { checkAvailability, bookTicket , getBookedTickets};

@@ -24,8 +24,9 @@ const errorHandler = (err , req , res , next) => {
                 message : "User have to login first"
             })
         default : 
+        console.log(err)
             res.status(501).json({
-                message : "internal server error"
+                message : err
             })
             
     }

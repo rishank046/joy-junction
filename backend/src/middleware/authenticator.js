@@ -17,7 +17,7 @@ const authenticate = catchWrapper(async (req, res, next) => {
     }
 
     if (!token) {
-        throw new Error('UNAUTHORIZED');
+        throw new Error('Token Not Found');
     }
 
     try {
